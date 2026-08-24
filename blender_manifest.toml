@@ -1,0 +1,22 @@
+schema_version = "1.0.0"
+
+id = "dgi_groundcover_tools"
+version = "1.0.0"
+name = "DGI Groundcover Tools"
+tagline = "Paint and edit groundcover instancers"
+maintainer = "DGIorio"
+type = "add-on"
+
+# website = "https://example.com/groundcover-tools"
+
+tags = ["Object", "Paint", "Geometry Nodes"]
+
+# Extensions require Blender 4.2+. Developed against Blender 5.2.
+blender_version_min = "4.2.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+# This add-on only touches the current scene's data - no file, network or
+# clipboard access - so it declares no permissions.
