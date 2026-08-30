@@ -37,7 +37,7 @@ def _is_gc_instancer(ob):
     if ob is None:
         return False
     o = getattr(ob, "original", ob)
-    if o.get("mw_instancer"):
+    if o.get("is_groundcover"):
         return True
     for m in getattr(o, "modifiers", ()):
         ng = getattr(m, "node_group", None)
@@ -73,10 +73,10 @@ def _tangent_basis(n):
 
 
 def _page_of(obj):
-    a = obj.data.attributes.get("mw_texture_page")
+    a = obj.data.attributes.get("page")
     if a and len(a.data):
         return a.data[0].value
-    return int(obj.get("mw_page", 0))
+    return int(obj.get("page", 0))
 
 
 def _card_size(s):
@@ -125,16 +125,16 @@ def _append_points(obj, world_points, sizes, rots, page):
         return a if a is not None else mesh.attributes.new(name, atype, 'POINT')
 
     a_scale = _attr("scale", 'FLOAT_VECTOR')
-    a_slot = _attr("mw_slot", 'INT')
-    a_page = _attr("mw_texture_page", 'INT')
-    a_flags = _attr("mw_render_flags", 'INT')
+    a_slot = _attr("slot", 'INT')
+    a_page = _attr("page", 'INT')
+    a_flags = _attr("flags", 'INT')
     a_rot = _attr("rotation", 'QUATERNION')
     for i, (w, h) in enumerate(sizes):
         j = start + i
         a_scale.data[j].vector = (w, w, h)
         a_slot.data[j].value = j
         a_page.data[j].value = page
-        a_flags.data[j].value = 0
+        a_flags.data[j].value = 1
         a_rot.data[j].value = rots[i]
     mesh.update()
 

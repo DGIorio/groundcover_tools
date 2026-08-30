@@ -9,6 +9,20 @@ Card options in the popup:
 """
 
 import bpy
+import zlib
+from random import randint
+
+def calculate_crc32(resource_name, to_lower=False):
+    if to_lower == True:
+        resource_name = resource_name.lower()
+    ID = hex(zlib.crc32(resource_name.encode()) & 0xffffffff)
+    ID = ID[2:].upper().zfill(8)
+    ID = '_'.join([ID[::-1][x:x+2][::-1] for x in range(0, len(ID), 2)])
+    return ID
+
+
+def get_randomID(min=0x250000, max=0x7FFFFF):
+    return randint(min, max) # max limit is arbitrary
 
 
 # ------------------------------------------------------------------ card / material
@@ -34,7 +48,7 @@ def _card_mesh(name, page=0, columns=1, rows=1):
     return m
 
 
-def _card_material(name, image=None, speed=0.1):
+def _card_material(name, image=None, speed=0.8, amount=0.24, shader_type="Groundcover"):
     """Ready-to-use foliage material: Image Texture -> Base Color + Alpha on a
     Principled BSDF, alpha-clipped and double-sided. The image can be filled in
     later via the 'Card Texture' node. A 'speed' custom property (Vector4, wind
@@ -43,7 +57,8 @@ def _card_material(name, image=None, speed=0.1):
     mat.use_nodes = True
     mat.use_backface_culling = False
     mat["speed"] = [float(speed), 0.0, 0.0, 0.0]
-    # alpha cutout - property names differ across EEVEE versions, so guard each
+    mat["amount"] = [float(amount), 0.0, 0.0, 0.0]
+    mat["shader_type"] = shader_type
     for attr, val in (("blend_method", 'CLIP'),
                       ("shadow_method", 'CLIP'),
                       ("alpha_threshold", 0.5),
@@ -60,22 +75,26 @@ def _card_material(name, image=None, speed=0.1):
     bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled"); bsdf.location = (0, 0)
     tex = nt.nodes.new("ShaderNodeTexImage")
     tex.location = (-420, 0)
-    tex.name = "Card Texture"
+    tex.name = "DiffuseSampler"
     tex.label = "Card Texture"
     if image is not None:
         tex.image = image
+        tex.label = image.name
     nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
     nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
     nt.links.new(tex.outputs["Alpha"], bsdf.inputs["Alpha"])
     return mat
 
 
-def _new_card(name, image, page=0, columns=1, rows=1, speed=0.1):
+def _new_card(name, image, page=0, columns=1, rows=1, speed=0.8, hash_name=False):
     """Fresh card mesh + material for a 'New Card' instancer."""
     if image is None:
         page, columns, rows = 0, 1, 1
     mesh = _card_mesh("GC_Card_%s" % name, page, columns, rows)
-    mesh.materials.append(_card_material("GC_%s" % name, image, speed))
+    material_name = "GC_%s" % name
+    if hash_name == True:
+        material_name = calculate_crc32(material_name + str(get_randomID()), to_lower=True)
+    mesh.materials.append(_card_material(material_name, image, speed))
     return mesh
 
 
@@ -92,6 +111,7 @@ def _templates_collection(context):
     if col is None:
         col = bpy.data.collections.new(name)
         context.scene.collection.children.link(col)
+        col["ignore_on_export"] = True
         lc = context.view_layer.layer_collection.children.get(name)
         if lc:
             lc.exclude = True
@@ -190,7 +210,7 @@ def _instancer_node_group(template_obj, wind=0.0):
     # optional wind sway, combined in LOCAL space so it sways about the card's
     # own axis. Phase = world_position . wind_dir * spatial_freq, so nearby
     # cards move together as a wave instead of randomly.
-    if wamp > 0 and rot_out is not None:
+    if wamp > 0:
         try:
             WIND_DIR = (1.0, 0.0, 0.0)
             SPATIAL_FREQ = 0.5
@@ -227,16 +247,21 @@ def _instancer_node_group(template_obj, wind=0.0):
             ng.links.new(sine.outputs[0], amp.inputs[0])
 
             aa = ng.nodes.new("FunctionNodeAxisAngleToRotation"); aa.location = (480, -220)
-            aa.inputs[0].default_value = (1.0, 0.0, 0.0)     # tilt about local X
+            aa.inputs[0].default_value = (0.0, 1.0, 0.0)     # tilt about local Y
             ng.links.new(amp.outputs[0], aa.inputs[1])
-            rr = ng.nodes.new("FunctionNodeRotateRotation"); rr.location = (660, -120)
-            try:
-                rr.rotation_space = 'LOCAL'                  # sway in the card's frame
-            except Exception:
-                pass
-            ng.links.new(rot_out, rr.inputs[0])
-            ng.links.new(aa.outputs[0], rr.inputs[1])
-            ng.links.new(rr.outputs[0], iop.inputs["Rotation"])   # relink through wind
+            if rot_out is not None:
+                rr = ng.nodes.new("FunctionNodeRotateRotation"); rr.location = (660, -120)
+                try:
+                    rr.rotation_space = 'LOCAL'                  # sway in the card's frame
+                except Exception:
+                    pass
+                ng.links.new(rot_out, rr.inputs[0])
+                ng.links.new(aa.outputs[0], rr.inputs[1])
+            if float(wind) > 0:                              # relink through wind
+                if rot_out is not None:
+                    ng.links.new(rr.outputs[0], iop.inputs["Rotation"])
+                else:
+                    ng.links.new(aa.outputs[0], iop.inputs["Rotation"])
         except Exception:
             pass
 
@@ -245,14 +270,14 @@ def _instancer_node_group(template_obj, wind=0.0):
 
 def _new_instancer(context, name, template_obj, collection, page=0, wind=0.0):
     mesh = bpy.data.meshes.new("Points_%s" % name)   # starts empty
-    for attr, atype in (("scale", 'FLOAT_VECTOR'), ("mw_slot", 'INT'),
-                        ("mw_texture_page", 'INT'), ("mw_render_flags", 'INT'),
+    for attr, atype in (("scale", 'FLOAT_VECTOR'), ("slot", 'INT'),
+                        ("page", 'INT'), ("flags", 'INT'),
                         ("rotation", 'QUATERNION')):
         mesh.attributes.new(attr, atype, 'POINT')
 
     obj = bpy.data.objects.new(name, mesh)
-    obj["mw_instancer"] = True
-    obj["mw_page"] = int(page)
+    obj["is_groundcover"] = True
+    obj["page"] = int(page)
     mod = obj.modifiers.new("GC_Instancer", 'NODES')
     mod.node_group = _instancer_node_group(template_obj, wind)
     collection.objects.link(obj)
@@ -309,6 +334,9 @@ class GC_OT_add_instancer(bpy.types.Operator):
     activate_tool: bpy.props.BoolProperty(
         name="Start Painting", default=True,
         description="Select the new instancer and activate the Vegetation Paint tool")
+    hash_names: bpy.props.BoolProperty(
+        name="Hash names", default=True,
+        description="Hash material and image names")
 
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self, width=340)
@@ -338,6 +366,7 @@ class GC_OT_add_instancer(bpy.types.Operator):
             else:
                 atlas.prop(self, "pages")
             atlas.prop(self, "page")
+            layout.prop(self, "hash_names")
 
             if has_image:
                 layout.label(text="Fill the 'Card Texture' node if empty.", icon='INFO')
@@ -362,11 +391,14 @@ class GC_OT_add_instancer(bpy.types.Operator):
             mesh = (src.data if (src and src.type == 'MESH') else _default_card_mesh())
             new_page = 0
         else:
+            apply_hash = self.hash_names
             image = None
             if self.image_path:
                 try:
                     image = bpy.data.images.load(bpy.path.abspath(self.image_path),
                                                  check_existing=True)
+                    if apply_hash == True:
+                        image.name = calculate_crc32(image.name + str(get_randomID()), to_lower=True)
                 except Exception as exc:
                     self.report({'WARNING'}, "Could not open image: %s" % exc)
             elif self.image_name:
@@ -379,7 +411,8 @@ class GC_OT_add_instancer(bpy.types.Operator):
             else:
                 cols, rws = self.pages, 1
             mesh = _new_card(self.name, image, new_page, cols, rws,
-                             speed=(self.wind_amount if self.wind else 0.0))
+                             speed=(self.wind_amount if self.wind else 0.8),
+                             hash_name=apply_hash)
 
         wind = self.wind_amount if self.wind else 0.0
         template = _template_object(context, mesh)
