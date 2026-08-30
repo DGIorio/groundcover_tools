@@ -136,10 +136,11 @@ def _template_object(context, mesh):
 _NG_VERSION = 4
 
 
-def _instancer_node_group(template_obj, wind=0.0):
+def _instancer_node_group(template_obj, wind=0.0, amount=0.0):
     # Wind amplitude: prefer the template material's "speed" custom property (value
     # in [0]); fall back to the passed value otherwise.
     wamp = float(wind)
+    curve_range = float(amount)
     if template_obj.data and template_obj.data.materials:
         mat = template_obj.data.materials[0]
         if mat is not None and "speed" in mat:
@@ -147,6 +148,11 @@ def _instancer_node_group(template_obj, wind=0.0):
                 wamp = float(mat["speed"][0])
             except Exception:
                 pass
+            if "amount" in mat:
+                try:
+                    curve_range = float(mat["amount"][0])
+                except Exception:
+                    pass
     name = "GC_Instancer_v%d_%s%s" % (_NG_VERSION, template_obj.name,
                                       ("_wind" if wamp > 0 else ""))
     ng = bpy.data.node_groups.get(name)
@@ -214,7 +220,6 @@ def _instancer_node_group(template_obj, wind=0.0):
         try:
             WIND_DIR = (1.0, 0.0, 0.0)
             SPATIAL_FREQ = 0.5
-            SPEED = 1.5
 
             pos = ng.nodes.new("GeometryNodeInputPosition"); pos.location = (-500, -300)
             wdir = ng.nodes.new("ShaderNodeCombineXYZ"); wdir.location = (-500, -430)
@@ -232,7 +237,7 @@ def _instancer_node_group(template_obj, wind=0.0):
 
             st = ng.nodes.new("GeometryNodeInputSceneTime"); st.location = (-500, -200)
             tt = ng.nodes.new("ShaderNodeMath")
-            tt.operation = 'MULTIPLY'; tt.inputs[1].default_value = SPEED
+            tt.operation = 'MULTIPLY'; tt.inputs[1].default_value = float(wamp)
             tt.location = (-320, -200)
             ng.links.new(st.outputs["Seconds"], tt.inputs[0])
 
@@ -242,7 +247,7 @@ def _instancer_node_group(template_obj, wind=0.0):
             sine = ng.nodes.new("ShaderNodeMath"); sine.operation = 'SINE'; sine.location = (160, -260)
             ng.links.new(arg.outputs[0], sine.inputs[0])
             amp = ng.nodes.new("ShaderNodeMath")
-            amp.operation = 'MULTIPLY'; amp.inputs[1].default_value = float(wamp)
+            amp.operation = 'MULTIPLY'; amp.inputs[1].default_value = float(curve_range)
             amp.location = (320, -260)
             ng.links.new(sine.outputs[0], amp.inputs[0])
 
